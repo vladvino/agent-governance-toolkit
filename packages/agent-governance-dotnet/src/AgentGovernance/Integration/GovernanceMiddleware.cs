@@ -2,6 +2,8 @@
 
 using AgentGovernance.Audit;
 using AgentGovernance.Policy;
+using AgentGovernance.RateLimiting;
+using AgentGovernance.Telemetry;
 
 namespace AgentGovernance.Integration;
 
@@ -54,22 +56,29 @@ public sealed class GovernanceMiddleware
 {
     private readonly PolicyEngine _policyEngine;
     private readonly AuditEmitter _auditEmitter;
+    private readonly RateLimiter? _rateLimiter;
+    private readonly GovernanceMetrics? _metrics;
 
     /// <summary>
     /// Initializes a new <see cref="GovernanceMiddleware"/> instance.
     /// </summary>
     /// <param name="policyEngine">The policy engine to evaluate requests against.</param>
     /// <param name="auditEmitter">The audit emitter for publishing governance events.</param>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="policyEngine"/> or <paramref name="auditEmitter"/> is <c>null</c>.
-    /// </exception>
-    public GovernanceMiddleware(PolicyEngine policyEngine, AuditEmitter auditEmitter)
+    /// <param name="rateLimiter">Optional rate limiter for enforcing rate-limit policies.</param>
+    /// <param name="metrics">Optional metrics collector for OpenTelemetry export.</param>
+    public GovernanceMiddleware(
+        PolicyEngine policyEngine,
+        AuditEmitter auditEmitter,
+        RateLimiter? rateLimiter = null,
+        GovernanceMetrics? metrics = null)
     {
         ArgumentNullException.ThrowIfNull(policyEngine);
         ArgumentNullException.ThrowIfNull(auditEmitter);
 
         _policyEngine = policyEngine;
         _auditEmitter = auditEmitter;
+        _rateLimiter = rateLimiter;
+        _metrics = metrics;
     }
 
     /// <summary>
@@ -96,6 +105,33 @@ public sealed class GovernanceMiddleware
 
         // Evaluate against the policy engine.
         var decision = _policyEngine.Evaluate(agentId, context);
+
+        // Enforce rate limiting if the decision indicates a rate-limit policy.
+        if (decision.RateLimited && _rateLimiter is not null && decision.MatchedRule is not null)
+        {
+            // Find the matching rule to get the limit expression.
+            var rule = FindMatchingRule(decision.MatchedRule);
+            if (rule?.Limit is not null)
+            {
+                var (maxCalls, window) = RateLimiter.ParseLimit(rule.Limit);
+                var rateLimitKey = $"{agentId}:{toolName}";
+                if (!_rateLimiter.TryAcquire(rateLimitKey, maxCalls, window))
+                {
+                    decision = new PolicyDecision
+                    {
+                        Allowed = false,
+                        Action = "rate_limited",
+                        MatchedRule = decision.MatchedRule,
+                        Reason = $"Rate limit exceeded: {rule.Limit} for tool '{toolName}'.",
+                        RateLimited = true,
+                        EvaluationMs = decision.EvaluationMs
+                    };
+                }
+            }
+        }
+
+        // Record metrics.
+        _metrics?.RecordDecision(decision.Allowed, agentId, toolName, decision.EvaluationMs, decision.RateLimited);
 
         // Determine event type based on the decision.
         var eventType = decision.Allowed
@@ -179,5 +215,21 @@ public sealed class GovernanceMiddleware
         }
 
         return context;
+    }
+
+    /// <summary>
+    /// Searches loaded policies for a rule by name.
+    /// </summary>
+    private PolicyRule? FindMatchingRule(string ruleName)
+    {
+        foreach (var policy in _policyEngine.ListPolicies())
+        {
+            foreach (var rule in policy.Rules)
+            {
+                if (string.Equals(rule.Name, ruleName, StringComparison.Ordinal))
+                    return rule;
+            }
+        }
+        return null;
     }
 }

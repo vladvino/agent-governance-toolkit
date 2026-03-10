@@ -3,6 +3,8 @@
 using AgentGovernance.Audit;
 using AgentGovernance.Integration;
 using AgentGovernance.Policy;
+using AgentGovernance.RateLimiting;
+using AgentGovernance.Telemetry;
 
 namespace AgentGovernance;
 
@@ -29,6 +31,12 @@ public sealed class GovernanceOptions
     /// are not emitted from the middleware. Defaults to <c>true</c>.
     /// </summary>
     public bool EnableAudit { get; init; } = true;
+
+    /// <summary>
+    /// Whether to enable OpenTelemetry metrics collection.
+    /// Defaults to <c>true</c>.
+    /// </summary>
+    public bool EnableMetrics { get; init; } = true;
 }
 
 /// <summary>
@@ -70,6 +78,16 @@ public sealed class GovernanceKernel
     public GovernanceMiddleware Middleware { get; }
 
     /// <summary>
+    /// The rate limiter shared across all governance evaluations.
+    /// </summary>
+    public RateLimiter RateLimiter { get; }
+
+    /// <summary>
+    /// OpenTelemetry-compatible governance metrics. <c>null</c> when metrics are disabled.
+    /// </summary>
+    public GovernanceMetrics? Metrics { get; }
+
+    /// <summary>
     /// Whether audit events are enabled.
     /// </summary>
     public bool AuditEnabled { get; }
@@ -92,7 +110,9 @@ public sealed class GovernanceKernel
 
         AuditEmitter = new AuditEmitter();
         AuditEnabled = opts.EnableAudit;
-        Middleware = new GovernanceMiddleware(PolicyEngine, AuditEmitter);
+        RateLimiter = new RateLimiter();
+        Metrics = opts.EnableMetrics ? new GovernanceMetrics() : null;
+        Middleware = new GovernanceMiddleware(PolicyEngine, AuditEmitter, RateLimiter, Metrics);
 
         // Load any initial policy files.
         foreach (var path in opts.PolicyPaths)
