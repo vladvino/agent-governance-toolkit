@@ -22,7 +22,7 @@ export const AgentStatusSchema = z.enum([
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
 export const AgentConfigSchema = z.object({
-  id: z.string().uuid(),
+  id: z.uuid(),
   name: z.string(),
   description: z.string(),
   task: z.string(),
@@ -31,10 +31,10 @@ export const AgentConfigSchema = z.object({
   triggers: z.array(z.string()).optional(),
   policies: z.array(z.string()).default([]),
   approvalRequired: z.boolean().default(false),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
   status: AgentStatusSchema.default('draft'),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
@@ -46,13 +46,13 @@ export const AgentSpecSchema = z.object({
     steps: z.array(z.object({
       name: z.string(),
       action: z.string(),
-      params: z.record(z.unknown()),
+      params: z.record(z.string(), z.unknown()),
       conditions: z.array(z.string()).optional(),
     })),
   }).optional(),
   integrations: z.array(z.object({
     type: z.string(),
-    config: z.record(z.unknown()),
+    config: z.record(z.string(), z.unknown()),
   })).optional(),
 });
 
@@ -93,7 +93,7 @@ export const PolicySchema = z.object({
   framework: z.string().optional(), // e.g., 'SOC2', 'GDPR', 'HIPAA'
   rules: z.array(PolicyRuleSchema),
   enabled: z.boolean().default(true),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type Policy = z.infer<typeof PolicySchema>;
@@ -131,27 +131,27 @@ export const ApprovalStatusSchema = z.enum([
 export type ApprovalStatus = z.infer<typeof ApprovalStatusSchema>;
 
 export const ApprovalRequestSchema = z.object({
-  id: z.string().uuid(),
-  agentId: z.string().uuid(),
+  id: z.uuid(),
+  agentId: z.uuid(),
   action: z.string(),
   description: z.string(),
   riskLevel: z.enum(['low', 'medium', 'high', 'critical']),
   requestedBy: z.string(),
-  requestedAt: z.string().datetime(),
-  expiresAt: z.string().datetime(),
+  requestedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
   status: ApprovalStatusSchema.default('pending'),
   approvers: z.array(z.object({
-    email: z.string().email(),
+    email: z.email(),
     name: z.string().optional(),
     role: z.string().optional(),
   })),
   approvals: z.array(z.object({
-    approver: z.string().email(),
+    approver: z.email(),
     decision: z.enum(['approved', 'rejected']),
     comment: z.string().optional(),
-    timestamp: z.string().datetime(),
+    timestamp: z.iso.datetime(),
   })).default([]),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
@@ -161,9 +161,9 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
 // =============================================================================
 
 export const AuditEntrySchema = z.object({
-  id: z.string().uuid(),
-  timestamp: z.string().datetime(),
-  agentId: z.string().uuid(),
+  id: z.uuid(),
+  timestamp: z.iso.datetime(),
+  agentId: z.uuid(),
   userId: z.string().optional(),
   action: z.string(),
   target: z.string().optional(),
@@ -174,7 +174,7 @@ export const AuditEntrySchema = z.object({
   }).optional(),
   outcome: z.enum(['SUCCESS', 'FAILURE', 'BLOCKED', 'PENDING']),
   errorMessage: z.string().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
@@ -228,11 +228,11 @@ export type ComplianceFramework = z.infer<typeof ComplianceFrameworkSchema>;
 
 export const ComplianceReportSchema = z.object({
   framework: ComplianceFrameworkSchema,
-  agentId: z.string().uuid(),
-  generatedAt: z.string().datetime(),
+  agentId: z.uuid(),
+  generatedAt: z.iso.datetime(),
   period: z.object({
-    start: z.string().datetime(),
-    end: z.string().datetime(),
+    start: z.iso.datetime(),
+    end: z.iso.datetime(),
   }),
   summary: z.object({
     compliant: z.boolean(),
@@ -267,7 +267,7 @@ export const CreateAgentInputSchema = z.object({
 export type CreateAgentInput = z.infer<typeof CreateAgentInputSchema>;
 
 export const AttachPolicyInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID to attach policy to'),
+  agentId: z.uuid().describe('Agent ID to attach policy to'),
   policyId: z.string().describe('Policy template ID or custom policy ID'),
   customRules: z.array(PolicyRuleSchema).optional().describe('Additional custom rules'),
 });
@@ -275,16 +275,16 @@ export const AttachPolicyInputSchema = z.object({
 export type AttachPolicyInput = z.infer<typeof AttachPolicyInputSchema>;
 
 export const TestAgentInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID to test'),
+  agentId: z.uuid().describe('Agent ID to test'),
   scenario: z.string().describe('Test scenario description'),
-  mockData: z.record(z.unknown()).optional().describe('Mock data for testing'),
+  mockData: z.record(z.string(), z.unknown()).optional().describe('Mock data for testing'),
   dryRun: z.boolean().default(true).describe('Run without side effects'),
 });
 
 export type TestAgentInput = z.infer<typeof TestAgentInputSchema>;
 
 export const DeployAgentInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID to deploy'),
+  agentId: z.uuid().describe('Agent ID to deploy'),
   environment: z.enum(['local', 'cloud']).default('local').describe('Deployment environment'),
   autoStart: z.boolean().default(false).describe('Start agent immediately after deployment'),
 });
@@ -292,7 +292,7 @@ export const DeployAgentInputSchema = z.object({
 export type DeployAgentInput = z.infer<typeof DeployAgentInputSchema>;
 
 export const GetAgentStatusInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID to get status for'),
+  agentId: z.uuid().describe('Agent ID to get status for'),
   includeMetrics: z.boolean().default(true).describe('Include execution metrics'),
   includeLogs: z.boolean().default(false).describe('Include recent logs'),
 });
@@ -309,19 +309,19 @@ export const ListTemplatesInputSchema = z.object({
 export type ListTemplatesInput = z.infer<typeof ListTemplatesInputSchema>;
 
 export const RequestApprovalInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID'),
+  agentId: z.uuid().describe('Agent ID'),
   action: z.string().describe('Action requiring approval'),
   description: z.string().describe('Description of what will happen'),
-  approvers: z.array(z.string().email()).describe('List of approver email addresses'),
+  approvers: z.array(z.email()).describe('List of approver email addresses'),
   expiresInHours: z.number().default(24).describe('Hours until approval expires'),
 });
 
 export type RequestApprovalInput = z.infer<typeof RequestApprovalInputSchema>;
 
 export const AuditLogInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID to get audit log for'),
-  startTime: z.string().datetime().optional().describe('Start of time range'),
-  endTime: z.string().datetime().optional().describe('End of time range'),
+  agentId: z.uuid().describe('Agent ID to get audit log for'),
+  startTime: z.iso.datetime().optional().describe('Start of time range'),
+  endTime: z.iso.datetime().optional().describe('End of time range'),
   actionFilter: z.string().optional().describe('Filter by action type'),
   limit: z.number().default(100).describe('Maximum entries to return'),
 });
@@ -339,7 +339,7 @@ export const CreatePolicyInputSchema = z.object({
 export type CreatePolicyInput = z.infer<typeof CreatePolicyInputSchema>;
 
 export const CheckComplianceInputSchema = z.object({
-  agentId: z.string().uuid().describe('Agent ID to check'),
+  agentId: z.uuid().describe('Agent ID to check'),
   framework: ComplianceFrameworkSchema.describe('Compliance framework to check against'),
   generateReport: z.boolean().default(true).describe('Generate detailed report'),
 });
