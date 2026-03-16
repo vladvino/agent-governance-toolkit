@@ -104,6 +104,16 @@ from .base import (
     ToolCallResult,
 )
 from .config import AgentOSConfig, get_config, reset_config
+from .conversation_guardian import (
+    AlertAction,
+    AlertSeverity,
+    ConversationAlert,
+    ConversationGuardian,
+    ConversationGuardianConfig,
+    EscalationClassifier,
+    FeedbackLoopBreaker,
+    OffensiveIntentDetector,
+)
 from .dry_run import DryRunCollector, DryRunDecision, DryRunPolicy, DryRunResult
 from .escalation import (
     ApprovalBackend,
@@ -171,6 +181,15 @@ __all__ = [
     "A2AGovernanceAdapter",
     "A2APolicy",
     "A2AEvaluation",
+    # A2A Conversation Guardian
+    "ConversationGuardian",
+    "ConversationGuardianConfig",
+    "ConversationAlert",
+    "AlertAction",
+    "AlertSeverity",
+    "EscalationClassifier",
+    "FeedbackLoopBreaker",
+    "OffensiveIntentDetector",
     # PydanticAI
     "PydanticAIKernel",
     # Microsoft Agent Framework (MAF)

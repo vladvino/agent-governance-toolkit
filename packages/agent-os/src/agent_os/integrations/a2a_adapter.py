@@ -68,16 +68,20 @@ class A2AEvaluation:
     source_did: str = ""
     skill_id: str = ""
     trust_score: int = 0
+    conversation_alert: Any | None = None
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "allowed": self.allowed,
             "reason": self.reason,
             "source_did": self.source_did,
             "skill_id": self.skill_id,
             "trust_score": self.trust_score,
         }
+        if self.conversation_alert is not None:
+            d["conversation_alert"] = self.conversation_alert.to_dict()
+        return d
 
 
 class A2AGovernanceAdapter:
@@ -85,7 +89,9 @@ class A2AGovernanceAdapter:
     Agent-OS governance adapter for A2A protocol tasks.
 
     Evaluates incoming A2A task requests (as dicts or typed objects)
-    against Agent-OS policies.
+    against Agent-OS policies. Optionally runs a ConversationGuardian
+    to detect escalation, offensive intent, and feedback loops in
+    inter-agent message content.
     """
 
     def __init__(
@@ -97,6 +103,7 @@ class A2AGovernanceAdapter:
         blocked_patterns: list[str] | None = None,
         min_trust_score: int = 0,
         max_requests_per_minute: int = 100,
+        conversation_guardian: Any | None = None,
     ):
         if policy is not None:
             self.policy = policy
@@ -110,6 +117,7 @@ class A2AGovernanceAdapter:
             )
         self._rate_tracker: dict[str, list[float]] = {}
         self._evaluations: list[A2AEvaluation] = []
+        self._guardian = conversation_guardian
 
     def _extract_fields(self, task: Any) -> dict[str, Any]:
         """Extract fields from a dict or typed object."""
@@ -149,12 +157,22 @@ class A2AGovernanceAdapter:
                     return False, f"Content matches blocked pattern: '{pattern}'"
         return True, ""
 
-    def evaluate_task(self, task: Any) -> A2AEvaluation:
+    def evaluate_task(
+        self,
+        task: Any,
+        *,
+        conversation_id: str = "",
+        sender: str = "",
+        receiver: str = "",
+    ) -> A2AEvaluation:
         """
         Evaluate an A2A task request against policies.
 
         Args:
             task: Dict (from JSON-RPC) or typed TaskEnvelope object.
+            conversation_id: Optional conversation ID for guardian analysis.
+            sender: Optional sender agent ID for guardian analysis.
+            receiver: Optional receiver agent ID for guardian analysis.
 
         Returns:
             A2AEvaluation with allowed/denied and reason.
@@ -198,6 +216,27 @@ class A2AGovernanceAdapter:
         if not ok:
             return deny(reason)
 
+        # 5.5 Conversation guardian analysis
+        conversation_alert = None
+        if self._guardian and fields["texts"]:
+            from .conversation_guardian import AlertAction
+
+            conv_id = conversation_id or task.get("id", "") if isinstance(task, dict) else getattr(task, "id", "")
+            src = sender or source_did
+            dst = receiver or skill_id
+            combined_text = " ".join(fields["texts"])
+            conversation_alert = self._guardian.analyze_message(
+                conversation_id=conv_id or "unknown",
+                sender=src or "unknown",
+                receiver=dst or "unknown",
+                content=combined_text,
+            )
+            if conversation_alert.action in (AlertAction.BREAK, AlertAction.QUARANTINE):
+                return deny(
+                    f"Conversation guardian: {conversation_alert.action.value} — "
+                    + "; ".join(conversation_alert.reasons)
+                )
+
         # 6. Rate limit
         if source_did:
             now = time.time()
@@ -215,6 +254,7 @@ class A2AGovernanceAdapter:
             source_did=source_did,
             skill_id=skill_id,
             trust_score=trust_score,
+            conversation_alert=conversation_alert,
         )
         self._evaluations.append(e)
         return e
