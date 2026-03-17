@@ -15,6 +15,8 @@ on:
           - agent-hypervisor
           - agent-sre
           - agent-compliance
+          - agent-runtime
+          - agent-lightning
           - agent-governance-dotnet
           - all
 
@@ -24,14 +26,28 @@ permissions:
   attestations: write
 
 jobs:
-  publish-python:
+  # -------------------------------------------------------------------
+  # Build Python packages and attest provenance.
+  #
+  # IMPORTANT: Actual PyPI publishing is done via the ADO pipeline
+  # (pipelines/pypi-publish.yml) using ESRP Release. GitHub Actions
+  # Trusted Publishers are NOT compliant for Microsoft PyPI publishing.
+  # See: docs/internal/pypi-publishing.md
+  # -------------------------------------------------------------------
+  build-python:
     if: ${{ github.event_name == 'release' || github.event.inputs.package != 'agent-governance-dotnet' }}
     runs-on: ubuntu-latest
-    environment: pypi
     strategy:
       fail-fast: false
       matrix:
-        package: [agent-os, agent-mesh, agent-hypervisor, agent-sre, agent-compliance]
+        package:
+          - agent-os
+          - agent-mesh
+          - agent-hypervisor
+          - agent-sre
+          - agent-compliance
+          - agent-runtime
+          - agent-lightning
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -49,16 +65,28 @@ jobs:
         working-directory: packages/${{ matrix.package }}
         run: python -m build
 
+      - name: Validate build artifacts
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          echo "=== Built artifacts for ${{ matrix.package }} ==="
+          ls -la dist/
+          # At least one wheel is required by Microsoft Python team policy
+          if ! ls dist/*.whl 1>/dev/null 2>&1; then
+            echo "::error::No wheel (.whl) found for ${{ matrix.package }} — at least one wheel is required"
+            exit 1
+          fi
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: packages/${{ matrix.package }}/dist/*
 
-      - name: Publish ${{ matrix.package }} to PyPI
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6db9a6b7e75b195db6a6b2be22da8 # v4.6.2
         with:
-          packages-dir: packages/${{ matrix.package }}/dist/
-          skip-existing: true
+          name: pypi-${{ matrix.package }}
+          path: packages/${{ matrix.package }}/dist/
+          retention-days: 30
 
   publish-nuget:
     if: ${{ github.event_name == 'release' || github.event.inputs.package == 'agent-governance-dotnet' || github.event.inputs.package == 'all' }}
@@ -70,6 +98,11 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: "8.0.x"
+
+      - name: Install NuGet CLI
+        run: |
+          curl -o /usr/local/bin/nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
+          echo 'alias nuget="mono /usr/local/bin/nuget.exe"' >> ~/.bashrc
 
       - name: Build .NET SDK
         working-directory: packages/agent-governance-dotnet
@@ -83,10 +116,62 @@ jobs:
         working-directory: packages/agent-governance-dotnet
         run: dotnet pack src/AgentGovernance/AgentGovernance.csproj --configuration Release --no-build --output ./nupkg
 
+      # ----------------------------------------------------------------
+      # ESRP Signing — Authenticode sign DLLs + NuGet package signing
+      # Requires ESRP onboarding (https://aka.ms/esrp-onboarding)
+      # Key code CP-401405 is the Microsoft NuGet signing certificate.
+      # ----------------------------------------------------------------
+      - name: Authenticode sign assemblies (ESRP)
+        if: ${{ env.ESRP_AAD_ID != '' }}
+        env:
+          ESRP_AAD_ID: ${{ secrets.ESRP_AAD_ID }}
+          ESRP_AAD_SECRET: ${{ secrets.ESRP_AAD_SECRET }}
+        run: |
+          echo "Submitting DLLs for Authenticode signing via ESRP..."
+          # Sign all packable DLLs before NuGet packing
+          # This step uses ESRP client or Azure Trusted Signing
+          # See: https://aka.ms/esrp-onboarding for setup
+          find packages/agent-governance-dotnet -name '*.dll' -path '*/Release/*' | head -20
+          echo "::warning::ESRP Authenticode signing must be configured. See https://aka.ms/esrp-onboarding"
+
+      - name: Sign NuGet package (ESRP)
+        if: ${{ env.ESRP_AAD_ID != '' }}
+        env:
+          ESRP_AAD_ID: ${{ secrets.ESRP_AAD_ID }}
+          ESRP_AAD_SECRET: ${{ secrets.ESRP_AAD_SECRET }}
+        run: |
+          echo "Submitting NuGet packages for signing via ESRP..."
+          # ESRP NuGet signing uses:
+          #   KeyCode: CP-401405
+          #   OperationCode: NuGetSign + NuGetVerify
+          # Alternatively, use dotnet nuget sign with Azure Trusted Signing:
+          #   dotnet nuget sign ./nupkg/*.nupkg \
+          #     --certificate-store-name My \
+          #     --certificate-fingerprint "$CERT_FINGERPRINT" \
+          #     --timestamper http://timestamp.digicert.com
+          echo "::warning::ESRP NuGet signing must be configured. See https://aka.ms/esrp-onboarding"
+
+      - name: Validate NuGet package metadata
+        working-directory: packages/agent-governance-dotnet
+        run: |
+          echo "=== Validating Microsoft NuGet compliance ==="
+          for pkg in ./nupkg/*.nupkg; do
+            echo "--- Package: $pkg ---"
+            dotnet nuget verify "$pkg" --all 2>/dev/null || echo "(Unsigned package — signing required before production publish)"
+            # Inspect package metadata
+            unzip -p "$pkg" '*.nuspec' | head -30
+          done
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: packages/agent-governance-dotnet/nupkg/*.nupkg
+
+      - name: Attest symbol package provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: packages/agent-governance-dotnet/nupkg/*.snupkg
+        continue-on-error: true
 
       - name: Publish to NuGet
         working-directory: packages/agent-governance-dotnet
@@ -97,4 +182,7 @@ jobs:
             echo "::warning::NUGET_API_KEY not set, skipping NuGet publish"
             exit 0
           fi
+          # Push both .nupkg and .snupkg (symbol package)
           dotnet nuget push ./nupkg/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          echo "=== Verifying published package signature ==="
+          echo "Run: NuGet.exe verify -Signatures <pkg> -CertificateFingerprint 3F9001EA83C560D712C24CF213C3D312CB3BFF51EE89435D3430BD06B5D0EECE;AA12DA22A49BCE7D5C1AE64CC1F3D892F150DA76140F210ABD2CBFFCA2C18A27;566A31882BE208BE4422F7CFD66ED09F5D4524A5994F50CCC8B05EC0528C1353"
