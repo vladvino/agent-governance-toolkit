@@ -151,16 +151,7 @@ class AgentTrustMiddleware:
                 min_score,
             )
             return JsonResponse(
-                {
-                    "error": "Trust verification failed",
-                    "detail": (
-                        f"Agent trust score ({trust_score}) is below the "
-                        f"required threshold ({min_score})."
-                    ),
-                    "agent_did": agent_did,
-                    "trust_score": trust_score,
-                    "required_score": min_score,
-                },
+                {"error": "Trust verification failed"},
                 status=403,
             )
 

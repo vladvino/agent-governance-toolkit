@@ -96,7 +96,17 @@ class PluginInstaller:
         manifest = self._registry.get_plugin(name, version)
 
         # Signature verification (first check)
-        if verify and manifest.signature and manifest.author in self._trusted_keys:
+        if verify:
+            if not manifest.signature:
+                raise MarketplaceError(
+                    f"Plugin {name}@{manifest.version} has no signature; "
+                    "install with verify=False to bypass (not recommended)"
+                )
+            if manifest.author not in self._trusted_keys:
+                raise MarketplaceError(
+                    f"Plugin {name}@{manifest.version} signed by untrusted "
+                    f"author '{manifest.author}'"
+                )
             public_key = self._trusted_keys[manifest.author]
             verify_signature(manifest, public_key)
             logger.info("Signature verified for %s@%s", name, manifest.version)
@@ -107,7 +117,7 @@ class PluginInstaller:
         self._resolve_dependencies(manifest, _seen=_seen)
 
         # V29: Re-verify signature after dependency resolution (TOCTOU guard)
-        if verify and manifest.signature and manifest.author in self._trusted_keys:
+        if verify:
             public_key = self._trusted_keys[manifest.author]
             verify_signature(manifest, public_key)
 

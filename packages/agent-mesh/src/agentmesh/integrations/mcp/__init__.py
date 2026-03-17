@@ -31,6 +31,7 @@ Example:
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Awaitable
@@ -115,6 +116,7 @@ class TrustGatedMCPServer:
         self._call_history: List[MCPToolCall] = []
         self._verified_clients: Dict[str, datetime] = {}
         self._verification_ttl = timedelta(minutes=10)
+        self._max_verified_clients = 10_000
 
     def register_tool(
         self,
@@ -160,6 +162,12 @@ class TrustGatedMCPServer:
             cached_time = self._verified_clients[client_did]
             if datetime.utcnow() - cached_time < self._verification_ttl:
                 return True
+            # Expired — remove stale entry
+            del self._verified_clients[client_did]
+
+        # V22: Evict expired entries when cache grows too large
+        if len(self._verified_clients) >= self._max_verified_clients:
+            self._evict_expired_clients()
 
         # Use TrustBridge if available
         if self.trust_bridge:
@@ -181,6 +189,16 @@ class TrustGatedMCPServer:
 
         logger.warning(f"Client {client_did} failed trust verification")
         return False
+
+    def _evict_expired_clients(self) -> None:
+        """Remove expired entries from the verified clients cache."""
+        now = datetime.utcnow()
+        expired = [
+            did for did, ts in self._verified_clients.items()
+            if now - ts >= self._verification_ttl
+        ]
+        for did in expired:
+            del self._verified_clients[did]
 
     def _check_capability(
         self,
@@ -224,7 +242,7 @@ class TrustGatedMCPServer:
         Returns:
             MCPToolCall with result or error
         """
-        call_id = f"{tool_name}-{datetime.utcnow().timestamp()}"
+        call_id = f"{tool_name}-{uuid.uuid4().hex}"
 
         call = MCPToolCall(
             call_id=call_id,
@@ -348,6 +366,21 @@ class TrustGatedMCPClient:
 
     async def connect(self, server_url: str) -> bool:
         """Connect to MCP server with trust verification."""
+        # V18: Validate server URL scheme
+        from urllib.parse import urlparse
+        parsed = urlparse(server_url)
+        if parsed.scheme not in ("http", "https", "ws", "wss"):
+            logger.warning("Rejected server URL with invalid scheme: %s", server_url)
+            return False
+        if not parsed.hostname:
+            logger.warning("Rejected server URL with missing host: %s", server_url)
+            return False
+        # Block common internal/loopback targets
+        _blocked_hosts = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "169.254.169.254"}
+        if parsed.hostname.lower() in _blocked_hosts:
+            logger.warning("Rejected internal/loopback server URL: %s", server_url)
+            return False
+
         # Verify server identity if TrustBridge available
         if self.trust_bridge:
             # Extract server DID from URL or discovery

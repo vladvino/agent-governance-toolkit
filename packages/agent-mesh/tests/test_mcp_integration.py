@@ -795,9 +795,9 @@ class TestMCPClientConnect:
         self, client_identity: AgentIdentity
     ) -> None:
         client = TrustGatedMCPClient(client_identity)
-        result = await client.connect("http://localhost:8080")
+        result = await client.connect("https://mcp.example.com:8080")
         assert result is True
-        assert "http://localhost:8080" in client._connected_servers
+        assert "https://mcp.example.com:8080" in client._connected_servers
 
     @pytest.mark.asyncio
     async def test_connect_with_bridge_no_server_did(
@@ -807,7 +807,7 @@ class TestMCPClientConnect:
         bridge = AsyncMock()
         bridge.verify_peer = AsyncMock(return_value=False)
         client = TrustGatedMCPClient(client_identity, trust_bridge=bridge)
-        result = await client.connect("http://localhost:8080")
+        result = await client.connect("https://mcp.example.com:8080")
         assert result is True
         bridge.verify_peer.assert_not_awaited()
 
@@ -864,11 +864,11 @@ class TestMCPClientInvoke:
         self, client_identity: AgentIdentity
     ) -> None:
         client = TrustGatedMCPClient(client_identity)
-        await client.connect("http://localhost:8080")
+        await client.connect("https://mcp.example.com:8080")
 
         with pytest.raises(NotImplementedError, match="MCP HTTP transport"):
             await client.invoke(
-                "http://localhost:8080",
+                "https://mcp.example.com:8080",
                 "sql_query",
                 {"query": "SELECT 1"},
             )

@@ -127,11 +127,9 @@ class TestWildcardCapabilityBypass:
     def test_prefix_wildcard_with_empty_prefix(self):
         """':*' (empty prefix) should NOT match arbitrary capabilities."""
         agent = _create_agent("test", [":*"])
-        # ':*' means prefix is '' — startswith('') is always True
-        # This is a hidden superuser capability
-        assert agent.has_capability(":anything") is True
-        # But it should NOT match capabilities without ':'
-        # Check if it does (it shouldn't but ':*' prefix logic may allow it)
+        # V04: ':*' is now rejected (len(":*") == 2, not > 2)
+        assert agent.has_capability(":anything") is False
+        assert agent.has_capability("read:data") is False
 
 
 # ===========================================================================

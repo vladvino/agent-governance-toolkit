@@ -128,8 +128,10 @@ class TestAgentTrustMiddleware:
         response = mw(request)
         assert response.status_code == 403
         body = json.loads(response.content)
-        assert body["trust_score"] == 0
-        assert body["required_score"] == 500
+        assert body["error"] == "Trust verification failed"
+        # V24: response must NOT leak trust_score or required_score
+        assert "trust_score" not in body
+        assert "required_score" not in body
 
     def test_invalid_signature_rejected(self):
         """A fabricated signature string is rejected."""
@@ -146,7 +148,8 @@ class TestAgentTrustMiddleware:
             response = mw(request)
             assert response.status_code == 403
             body = json.loads(response.content)
-            assert body["trust_score"] == 0
+            assert body["error"] == "Trust verification failed"
+            assert "trust_score" not in body
         finally:
             del settings.AGENTMESH_AGENT_KEYS
 
@@ -243,7 +246,8 @@ class TestTrustRequiredDecorator:
             # score 750 < per-view 800 → 403
             assert response.status_code == 403
             body = json.loads(response.content)
-            assert body["required_score"] == 800
+            assert body["error"] == "Trust verification failed"
+            assert "required_score" not in body
         finally:
             del settings.AGENTMESH_AGENT_KEYS
 
