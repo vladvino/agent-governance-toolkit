@@ -1,0 +1,16 @@
+apiVersion: governance.toolkit/v1
+name: demo-policy
+description: Allow weather queries, block email
+agents:
+  - "*"
+default_action: deny
+rules:
+  - name: allow-get-weather
+    condition: "tool == 'get_weather'"
+    action: allow
+    priority: 100
+  - name: block-send-email
+    condition: "tool == 'send_email'"
+    action: deny
+    priority: 100
+    description: Email requires human approval workflow
